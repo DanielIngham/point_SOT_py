@@ -50,22 +50,20 @@ class NN():
         np.fill_diagonal(self.Q, 0.01)
         np.fill_diagonal(self.R, self.simulator.noise)
 
-    def prediction(self, k : int):
-        self.states[SE2.X.value, k] =  self.states[SE2.X.value, k - 1] + \
-            self.sample_rate * self.states[SE2.V.value, k - 1] * \
-                np.cos(self.states[SE2.O.value, k - 1])
+    def prediction(self, prior, prior_cov, posterior, posterior_cov):
+        posterior[SE2.X.value] =  prior[SE2.X.value] + \
+            self.sample_rate * prior[SE2.V.value] * np.cos(prior[SE2.O.value])
 
-        self.states[SE2.Y.value, k] = self.states[SE2.Y.value, k - 1] + \
-            self.sample_rate * self.states[SE2.V.value, k - 1] * \
-                np.sin(self.states[SE2.O.value, k - 1])
+        posterior[SE2.Y.value] = prior[SE2.Y.value] + \
+            self.sample_rate * prior[SE2.V.value] * np.sin(prior[SE2.O.value])
 
-        self.states[SE2.O.value, k] = self.states[SE2.O.value, k - 1]
-        self.states[SE2.V.value, k] = self.states[SE2.V.value, k - 1]
-        self.states[SE2.A.value, k] = .0
-        self.states[SE2.W.value, k] = .0
+        posterior[SE2.O.value] = prior[SE2.O.value]
+        posterior[SE2.V.value] = prior[SE2.V.value]
+        posterior[SE2.A.value] = .0
+        posterior[SE2.W.value] = .0
 
-        F = self.motion_jacobian(self.states[ : , k - 1])
-        self.covariances[k] = F @ self.covariances[k - 1] @ F.T + self.Q
+        F = self.motion_jacobian(prior)
+        posterior_cov[:] = F @ prior_cov @ F.T + self.Q
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
         jacobian = np.zeros((self.total_states, self.total_states))
@@ -82,7 +80,7 @@ class NN():
 
         return jacobian
 
-    def correction(self, k : int):
+    def correction(self, state, covariance, measurement_set):
 
         P_d = self.simulator.detection_prob
         clutter_intense = self.simulator.average_clutter / self.simulator.fov_vol
@@ -95,10 +93,10 @@ class NN():
             "z": (0, 0)
         }
 
-        for measurement in self.simulator.measurements[k]:
-            v_k = np.array(measurement) - self.predicted_meas(k)
-            H_k = self.meas_jacobian(self.states[ : , k])
-            S_k = H_k @ self.covariances[k] @ H_k.T + self.R
+        for measurement in measurement_set:
+            v_k = np.array(measurement) - self.predicted_meas(state)
+            H_k = self.meas_jacobian(state)
+            S_k = H_k @ covariance @ H_k.T + self.R
 
             weight = P_d * self.mvn_pdf(v_k, S_k) / clutter_intense
 
@@ -115,11 +113,11 @@ class NN():
 
         self.choosen_measurements.append(max_weight["z"])
 
-        K_k = self.covariances[k] @ max_weight["H"].T @\
+        K_k = covariance @ max_weight["H"].T @\
             np.linalg.inv(max_weight["S"]) 
 
-        self.covariances[k] -= K_k @ max_weight["S"] @ K_k.T
-        self.states[ : , k] += K_k @ max_weight["v"]
+        covariance[:] -= K_k @ max_weight["S"] @ K_k.T
+        state[:] += K_k @ max_weight["v"]
 
 
 
@@ -141,23 +139,29 @@ class NN():
         return jacobian
 
 
-    def predicted_meas(self, k) -> np.ndarray:
+    def predicted_meas(self, state) -> np.ndarray:
         predicted_meas = np.zeros(2, dtype=np.float64)
+        print(state[SE2.X.value])
 
         predicted_meas[Indicies.RANGE.value] =\
-            np.sqrt(np.pow(self.states[SE2.X.value][k],2) +\
-                np.pow(self.states[SE2.Y.value][k],2))
+            np.sqrt(np.pow(state[SE2.X.value],2) +\
+                np.pow(state[SE2.Y.value],2))
 
         predicted_meas[Indicies.BEARING.value] =\
-            np.atan2(self.states[SE2.Y.value][k], self.states[SE2.X.value][k])
+            np.atan2(state[SE2.Y.value], state[SE2.X.value])
 
         return predicted_meas
 
 
     def track(self):
         for k in range(1, len(self.simulator.measurements)):
-            self.prediction(k)
-            self.correction(k)
+            self.prediction(self.states[ : ,k-1], 
+                            self.covariances[k-1], 
+                            self.states[ : , k], 
+                            self.covariances[k])
+
+            self.correction(self.states[ : , k], self.covariances[k],
+                            self.simulator.measurements[k])
 
     def get_ellipse(self, i, n_std=3., **kwargs) :
         cov = self.covariances[i, :2, :2]   # top-left 2x2
