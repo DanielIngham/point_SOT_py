@@ -1,0 +1,3 @@
+[submodule "Simulator"]
+	path = Simulator
+	url = git@github.com:DanielIngham/PointTrackingSim_py.git
