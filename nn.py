@@ -1,3 +1,4 @@
+from math import nan
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Ellipse
@@ -17,11 +18,14 @@ class NN():
         self.simulator : Simulator = simulator
         self.states = np.zeros((self.total_states, len(self.simulator.measurements)), 
                                dtype=np.float64)
+
         self.covariances = np.zeros((self.simulator.datapoints, 
                                      self.total_states, self.total_states), 
                                     dtype=np.float64)
 
         self.sample_rate = simulator.sample_rate
+
+        self.choosen_measurements = []
 
         self.Q = np.zeros((self.total_states, self.total_states))
         self.R = np.zeros((self.total_measurements, self.total_measurements))
@@ -61,7 +65,7 @@ class NN():
         self.states[SE2.W.value, k] = .0
 
         F = self.motion_jacobian(self.states[ : , k - 1])
-        self.covariances[k] = F @ self.covariances[k - 1] @ F.transpose() + self.Q
+        self.covariances[k] = F @ self.covariances[k - 1] @ F.T + self.Q
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
         jacobian = np.zeros((self.total_states, self.total_states))
@@ -69,7 +73,7 @@ class NN():
         theta = state[SE2.O.value]
         v = state[SE2.V.value]
 
-        delta_t = self.simulator.sample_rate
+        delta_t = self.sample_rate
 
         jacobian[0] = [1,0, -v * np.sin(theta) * delta_t, np.cos(theta) * delta_t,0,0]
         jacobian[1] = [0,1,  v * np.cos(theta) * delta_t, np.sin(theta) * delta_t,0,0]
@@ -87,13 +91,14 @@ class NN():
             "w" : 1 - P_d, 
             "v": np.zeros(2), 
             "S": np.zeros((2,2)),
-            "H": np.zeros((2,6))
+            "H": np.zeros((2,6)),
+            "z": (0, 0)
         }
 
         for measurement in self.simulator.measurements[k]:
             v_k = np.array(measurement) - self.predicted_meas(k)
             H_k = self.meas_jacobian(self.states[ : , k])
-            S_k = H_k @ self.covariances[k] @ H_k.transpose() + self.R
+            S_k = H_k @ self.covariances[k] @ H_k.T + self.R
 
             weight = P_d * self.mvn_pdf(v_k, S_k) / clutter_intense
 
@@ -102,14 +107,18 @@ class NN():
                 max_weight["v"] = v_k
                 max_weight["S"] = S_k
                 max_weight["H"] = H_k
+                max_weight["z"] = measurement
 
         if max_weight["w"] == 1 - P_d: 
+            self.choosen_measurements.append((nan,nan))
             return
 
-        K_k = self.covariances[k] @ max_weight["H"].transpose() @\
+        self.choosen_measurements.append(max_weight["z"])
+
+        K_k = self.covariances[k] @ max_weight["H"].T @\
             np.linalg.inv(max_weight["S"]) 
 
-        self.covariances[k] -= K_k @ max_weight["S"] @ K_k.transpose()
+        self.covariances[k] -= K_k @ max_weight["S"] @ K_k.T
         self.states[ : , k] += K_k @ max_weight["v"]
 
 
@@ -209,6 +218,8 @@ def update(frame):
     new_ellipse = filter.get_ellipse(frame, n_std=3.,
                                      edgecolor='blue', facecolor='none')
 
+    scat3.set_data([x[frame - 1]],[y[frame - 1]])
+
     # Copy properties from new_ellipse → existing ellipse
     ellipse.set_center(new_ellipse.get_center())
     ellipse.width = new_ellipse.width
@@ -216,30 +227,34 @@ def update(frame):
     ellipse.angle = new_ellipse.angle
 
     line.set_data(filter.states[0, : frame + 1], filter.states[1, :frame + 1]) 
-    return line, scat, scat2, ellipse
+    return line, scat, scat2, scat3, ellipse
 
 if __name__ == "__main__":
     filter = NN(Simulator(1))
     filter.track()
+    xy = [(r * np.cos(b), r * np.sin(b)) for r, b in filter.choosen_measurements]
+    x,y = zip(*xy)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     line, = ax.plot([], [], color='blue', linewidth=2)
     scat, = ax.plot([], [], 'o', color='blue')
     scat2, = ax.plot([], [], 'o', color='red')
+    scat3, = ax.plot([], [], 'o', color='green', alpha=0.5)
 
     ellipse = filter.get_ellipse(0 , n_std=3., 
                           edgecolor='blue', facecolor='none')
     ax.add_patch(ellipse)
+    ax.scatter(x, y)
 
     # filter.simulator.plot_clutter(ax)
     # filter.plot_trajectories(ax)
-    # filter.simulator.plot_trajectories(ax)
+    filter.simulator.plot_trajectories(ax)
 
     ani = animation.FuncAnimation(
         fig,
         update,
         frames=range(1, len(filter.states[0])),   # one frame per point
-        interval=300,        # milliseconds between frames
+        interval=500,        # milliseconds between frames
         repeat=True
     )
 
