@@ -8,77 +8,13 @@ from Simulator.trackSim import Simulator
 from Simulator.trackSim import SE2
 from Simulator.trackSim import Indicies
 
-class NN():
+from sot import SOT
+
+class NN(SOT):
     """docstring for ClassName."""
-    total_states = 6
-    total_measurements = 2
 
-    def __init__(self, simulator: Simulator):
-        # super(ClassName, self).__init__()
-        self.simulator : Simulator = simulator
-        self.states = np.zeros((self.total_states, len(self.simulator.measurements)), 
-                               dtype=np.float64)
-
-        self.covariances = np.zeros((self.simulator.datapoints, 
-                                     self.total_states, self.total_states), 
-                                    dtype=np.float64)
-
-        self.sample_rate = simulator.sample_rate
-
-        self.choosen_measurements = []
-
-        self.Q = np.zeros((self.total_states, self.total_states))
-        self.R = np.zeros((self.total_measurements, self.total_measurements))
-
-        self.set_prior()
-
-    def set_prior(self):
-        if (self.simulator.total_objects > 1):
-            raise ValueError("Single object trackers can only track one object.")
-
-        first_id : int = 0
-
-        self.states[SE2.X.value, 0] = self.simulator.objects[first_id][SE2.X.value][0]
-        self.states[SE2.Y.value, 0] = self.simulator.objects[first_id][SE2.Y.value][0]
-        self.states[SE2.O.value, 0] = self.simulator.objects[first_id][SE2.O.value][0]
-        self.states[SE2.V.value, 0] = self.simulator.objects[first_id][SE2.V.value][0]
-        self.states[SE2.A.value, 0] = self.simulator.objects[first_id][SE2.A.value][0]
-        self.states[SE2.W.value, 0] = self.simulator.objects[first_id][SE2.W.value][0]
-
-        np.fill_diagonal(self.covariances[0], 0.01)
-
-        np.fill_diagonal(self.Q, 0.01)
-        np.fill_diagonal(self.R, self.simulator.noise)
-
-    def prediction(self, prior, prior_cov, posterior, posterior_cov):
-        posterior[SE2.X.value] =  prior[SE2.X.value] + \
-            self.sample_rate * prior[SE2.V.value] * np.cos(prior[SE2.O.value])
-
-        posterior[SE2.Y.value] = prior[SE2.Y.value] + \
-            self.sample_rate * prior[SE2.V.value] * np.sin(prior[SE2.O.value])
-
-        posterior[SE2.O.value] = prior[SE2.O.value]
-        posterior[SE2.V.value] = prior[SE2.V.value]
-        posterior[SE2.A.value] = .0
-        posterior[SE2.W.value] = .0
-
-        F = self.motion_jacobian(prior)
-        posterior_cov[:] = F @ prior_cov @ F.T + self.Q
-
-    def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
-        jacobian = np.zeros((self.total_states, self.total_states))
-
-        theta = state[SE2.O.value]
-        v = state[SE2.V.value]
-
-        delta_t = self.sample_rate
-
-        jacobian[0] = [1,0, -v * np.sin(theta) * delta_t, np.cos(theta) * delta_t,0,0]
-        jacobian[1] = [0,1,  v * np.cos(theta) * delta_t, np.sin(theta) * delta_t,0,0]
-        jacobian[2] = [0,0,1,0,0,0]
-        jacobian[3] = [0,0,0,1,0,0]
-
-        return jacobian
+    def __init__(self, simulator : Simulator):
+        super().__init__(simulator)
 
     def correction(self, state, covariance, measurement_set):
 
@@ -98,7 +34,7 @@ class NN():
             H_k = self.meas_jacobian(state)
             S_k = H_k @ covariance @ H_k.T + self.R
 
-            weight = P_d * self.mvn_pdf(v_k, S_k) / clutter_intense
+            weight = P_d * self.gaussian(v_k, S_k) / clutter_intense
 
             if weight > max_weight["w"]:
                 max_weight["w"] = weight
@@ -119,53 +55,7 @@ class NN():
         covariance[:] -= K_k @ max_weight["S"] @ K_k.T
         state[:] += K_k @ max_weight["v"]
 
-
-
-    def mvn_pdf(self, diff, cov):
-        inv_cov = np.linalg.inv(cov)
-        det_cov = np.linalg.det(cov)
-        norm_const = 1.0 / np.sqrt((2*np.pi)**2 * det_cov)
-        return norm_const * np.exp(-0.5 * diff.T @ inv_cov @ diff)
-
-    def meas_jacobian(self, state : np.ndarray) -> np.ndarray :
-        jacobian = np.zeros((self.total_measurements, self.total_states))
-        x = state[SE2.X.value]
-        y = state[SE2.Y.value]
-        r = np.sqrt(np.pow(x,2) + np.pow(y,2))
-
-        jacobian[0] = [x/r, y/r, 0, 0, 0, 0]
-        jacobian[1] = [-y/np.pow(r,2), x/np.pow(r,2), 0, 0, 0, 0]
-
-        return jacobian
-
-
-    def predicted_meas(self, state) -> np.ndarray:
-        predicted_meas = np.zeros(2, dtype=np.float64)
-        print(state[SE2.X.value])
-
-        predicted_meas[Indicies.RANGE.value] =\
-            np.sqrt(np.pow(state[SE2.X.value],2) +\
-                np.pow(state[SE2.Y.value],2))
-
-        predicted_meas[Indicies.BEARING.value] =\
-            np.atan2(state[SE2.Y.value], state[SE2.X.value])
-
-        return predicted_meas
-
-
-    def track(self):
-        for k in range(1, len(self.simulator.measurements)):
-            self.prediction(self.states[ : ,k-1], 
-                            self.covariances[k-1], 
-                            self.states[ : , k], 
-                            self.covariances[k])
-
-            self.correction(self.states[ : , k], self.covariances[k],
-                            self.simulator.measurements[k])
-
-    def get_ellipse(self, i, n_std=3., **kwargs) :
-        cov = self.covariances[i, :2, :2]   # top-left 2x2
-        mean = self.states[ : 2, i]
+    def get_ellipse(self, mean, cov, n_std=3., **kwargs) :
 
         # Eigen-decomposition
         vals, vecs = np.linalg.eigh(cov)
@@ -180,94 +70,106 @@ class NN():
         return Ellipse(xy=mean, width=width, height=height, angle=theta, **kwargs)
 
 
-    def plot_trajectories(self, ax):
-        """
-        Plots the trajectory line that the object followed.
-        Parameters:
-            ax (Axis): matplotlib axis.
-        """
+    def plot_meas(self, frame, clutter_plot, measurement_plot): 
+        clutter = []
+        actual_measurement = [] 
+        for measurement in self.simulator.measurements[frame]:
+            if measurement in self.simulator.clutter[frame]:
+                clutter.append(measurement)
+            else:
+                actual_measurement = measurement
 
-        ax.plot(self.states[SE2.X.value, : ],
-                self.states[SE2.Y.value, : ], label="NN", marker='o')
+        ranges = np.array([r for r, _ in clutter])
+        bearings_rad = np.array([b for _, b in clutter]) 
 
-        for i in range(len(self.states)):
-            if (i % 10 == 0):
-                ax.add_patch(self.get_ellipse(i , n_std=3., 
-                                      edgecolor='blue', facecolor='none'))
+        x_components = ranges * np.cos(bearings_rad)
+        y_components = ranges * np.sin(bearings_rad)
 
+        clutter_plot.set_data(x_components, y_components)
 
-def update(frame):
-
-    clutter = []
-    actual_measurement = [] 
-    for measurement in filter.simulator.measurements[frame]:
-        if measurement in filter.simulator.clutter[frame]:
-            clutter.append(measurement)
+        if actual_measurement != [] :
+            measurement_plot.set_data(
+                [actual_measurement[0] * np.cos(actual_measurement[1])],
+                [actual_measurement[0] * np.sin(actual_measurement[1])])
         else:
-            actual_measurement = measurement
+            measurement_plot.set_data([], [])
 
-    ranges = np.array([r for r, _ in clutter])
-    bearings_rad = np.array([b for _, b in clutter]) 
+    def plot_covariance(self, frame):
+        cov = self.covariances[frame, :2, :2]
+        mean = self.states[ : 2, frame]
 
-    x_components = ranges * np.cos(bearings_rad)
-    y_components = ranges * np.sin(bearings_rad)
+        new_ellipse = self.get_ellipse(mean, cov, n_std=3.,
+                                         edgecolor='blue', facecolor='none')
+
+        # Copy properties from new_ellipse to existing ellipse
+        self.covariance.set_center(new_ellipse.get_center())
+        self.covariance.width = new_ellipse.width
+        self.covariance.height = new_ellipse.height
+        self.covariance.angle = new_ellipse.angle
+
+
+    def plot_choosen_measurement(self, frame):
+        if (len(self.choosen_measurements) > 0):
+            self.choosen_meas_plot.set_data([self.x[frame - 1]],[self.y[frame - 1]])
+
+    def update(self, frame):
+        self.plot_meas(frame, self.clutter_plot, self.real_meas_plot)
+        self.plot_choosen_measurement(frame)
+
+        self.plot_covariance(frame)
+
+        self.trajectory.set_data(self.states[0, : frame + 1],
+                                 self.states[1, :frame + 1]) 
+
+        return self.trajectory, self.clutter_plot, \
+            self.real_meas_plot, self.choosen_meas_plot, self.covariance
     
-    scat.set_data(x_components, y_components)
-    if actual_measurement != [] :
-        scat2.set_data([actual_measurement[0] * np.cos(actual_measurement[1])], 
-                       [actual_measurement[0] * np.sin(actual_measurement[1])])
-    else:
-        scat2.set_data([], [])
+    def animation(self):
+        fig, ax = plt.subplots(figsize=(10, 6))
+        self.trajectory, = ax.plot([], [], "-o" ,color='blue', linewidth=2,
+                                   label="Trajectory")
+        self.clutter_plot, = ax.plot([], [], 'o', color='grey', alpha=0.5,
+                                     label="Clutter")
+        self.real_meas_plot, = ax.plot([], [], 'o', color='red',
+                                       label="True Measurement")
+        self.choosen_meas_plot, = ax.plot([], [], 'o', color='green', alpha=0.5,
+                                          label="Selected Measurement")
 
-    new_ellipse = filter.get_ellipse(frame, n_std=3.,
-                                     edgecolor='blue', facecolor='none')
+        cov = self.covariances[0, :2, :2]
+        mean = self.states[ : 2, 0]
 
-    scat3.set_data([x[frame - 1]],[y[frame - 1]])
+        self.covariance = self.get_ellipse(mean, cov , n_std=3., 
+                              edgecolor='blue', facecolor='none')
 
-    # Copy properties from new_ellipse → existing ellipse
-    ellipse.set_center(new_ellipse.get_center())
-    ellipse.width = new_ellipse.width
-    ellipse.height = new_ellipse.height
-    ellipse.angle = new_ellipse.angle
+        ax.add_patch(self.covariance)
 
-    line.set_data(filter.states[0, : frame + 1], filter.states[1, :frame + 1]) 
-    return line, scat, scat2, scat3, ellipse
+        if (len(self.choosen_measurements) > 0):
+            self.xy = [(r * np.cos(b), r * np.sin(b)) for r, b in self.choosen_measurements]
+            self.x,self.y = zip(*self.xy)
+
+        self.simulator.plot_trajectories(ax)
+
+        ani = animation.FuncAnimation(
+            fig,
+            self.update,
+            frames=range(1, len(self.states[0])),
+            interval=500,
+            repeat=True
+        )
+
+        ax.set_xlim(left=self.simulator.fov[0][0], right=self.simulator.fov[0][1])
+        ax.set_ylim(bottom=self.simulator.fov[1][0], top=self.simulator.fov[1][1])
+        ax.set_xlabel('X Coordinate')
+        ax.set_ylabel('Y Coordinate')
+        ax.set_title('Single Object Tracking')
+        ax.legend(loc='upper right')
+        ax.grid(True)
+
+        plt.show()
+
 
 if __name__ == "__main__":
     filter = NN(Simulator(1))
     filter.track()
-    xy = [(r * np.cos(b), r * np.sin(b)) for r, b in filter.choosen_measurements]
-    x,y = zip(*xy)
+    filter.animation()
 
-    fig, ax = plt.subplots(figsize=(10, 6))
-    line, = ax.plot([], [], color='blue', linewidth=2)
-    scat, = ax.plot([], [], 'o', color='blue')
-    scat2, = ax.plot([], [], 'o', color='red')
-    scat3, = ax.plot([], [], 'o', color='green', alpha=0.5)
-
-    ellipse = filter.get_ellipse(0 , n_std=3., 
-                          edgecolor='blue', facecolor='none')
-    ax.add_patch(ellipse)
-    ax.scatter(x, y)
-
-    # filter.simulator.plot_clutter(ax)
-    # filter.plot_trajectories(ax)
-    filter.simulator.plot_trajectories(ax)
-
-    ani = animation.FuncAnimation(
-        fig,
-        update,
-        frames=range(1, len(filter.states[0])),   # one frame per point
-        interval=500,        # milliseconds between frames
-        repeat=True
-    )
-
-    ax.set_xlim(left=filter.simulator.fov[0][0], right=filter.simulator.fov[0][1])
-    ax.set_ylim(bottom=filter.simulator.fov[1][0], top=filter.simulator.fov[1][1])
-    # ax.set_xlabel('X Coordinate')
-    # ax.set_ylabel('Y Coordinate')
-    # ax.set_title('Plot of Objects from Dictionary')
-    # ax.legend(title='Object ID')
-    ax.grid(True)
-
-    plt.show()
