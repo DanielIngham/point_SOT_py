@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from matplotlib.lines import Line2D
 import numpy as np
 
 import matplotlib.pyplot as plt
@@ -269,11 +270,9 @@ class SOT(ABC):
         mean : np.ndarray
             The mean of the 2D multivariate Gaussian distribution. It represents the 
             2D x and y position of the center of the ellipse.
-            Shape: (2,)
 
         cov : np.ndarray
             The covariance matrix of the multivariate Gaussian distribution.
-            Shape: (2, 2)
         
         n_std : float
             The number of standard deviations that the circumference of the ellipse
@@ -295,13 +294,30 @@ class SOT(ABC):
 
         # Compute ellipse parameters
         theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
-        width, height = 2 * n_std * np.sqrt(vals)  
+        width, height = n_std * np.sqrt(vals)  
 
         # Create ellipse
         return Ellipse(xy=mean, width=width, height=height, angle=theta, **kwargs)
 
 
-    def plot_meas(self, frame, clutter_plot, measurement_plot) -> None:
+    def plot_meas(self, frame : int, clutter_plot : Line2D, 
+                  measurement_plot : Line2D) -> None:
+        """
+        Plots the measurements recieved at each time step. These measurements 
+        include clutter and the groundtruth object originated measurement.
+
+        Parameters
+        ----------
+        frame : int
+            The current frame of the animation.
+
+        clutter_plot : Line2D
+            The plot containing all the clutter measurements
+
+        measurement_plot : Line2D
+            The plot containing the object originated measurement.
+        """
+        # Divide the measurments into clutter and object originated lists
         clutter = []
         actual_measurement = [] 
         for measurement in self.simulator.measurements[frame]:
@@ -310,6 +326,7 @@ class SOT(ABC):
             else:
                 actual_measurement = measurement
 
+        # Convert clutter range and bearing points into 2D xy coordintes 
         ranges = np.array([r for r, _ in clutter])
         bearings_rad = np.array([b for _, b in clutter]) 
 
@@ -326,6 +343,15 @@ class SOT(ABC):
             measurement_plot.set_data([], [])
 
     def plot_covariance(self, frame) -> None:
+        """
+        Adds a new ellipse patch to the plot to indicate the current estimation
+        error covariance.
+
+        Parameters
+        ----------
+        frame : int
+            The current frame of the animation.
+        """
         cov = self.covariances[frame, :2, :2]
         mean = self.states[ : 2, frame]
 
@@ -339,11 +365,37 @@ class SOT(ABC):
         self.covariance.angle = new_ellipse.angle
 
 
-    def plot_choosen_measurement(self, frame) -> None:
+    def plot_choosen_measurement(self, frame : int) -> None:
+        """
+        Plots the measurement choosen by the filter.
+
+        Specifically for maximum aposteriori estimates like nearest neighbour, 
+        where a single measurement is choosen from the set of measurements containing
+        clutter.
+
+        Parameters
+        ----------
+        frame : int
+            The current frame of the animation.
+
+        Notes
+        -----
+        Other filtering approaches like Probabilistic Data Association (PDA), and
+        Gaussian Sum Filtering (GSF) don't explicitly select a measurement, therefore
+        they would not have this plot present in their animation.  
+        """
         if (len(self.choosen_measurements) > 0):
             self.choosen_meas_plot.set_data([self.x[frame - 1]],[self.y[frame - 1]])
 
     def update(self, frame : int) -> tuple:
+        """
+        Updates the animation using data for the current frame.
+
+        Parameters
+        ----------
+        frame : int
+            The current frame of the animation.
+        """
         self.plot_meas(frame, self.clutter_plot, self.real_meas_plot)
 
         self.plot_choosen_measurement(frame)
@@ -368,7 +420,15 @@ class SOT(ABC):
             return self.trajectory, self.clutter_plot,\
                 self.real_meas_plot, self.covariance
 
-    def animation(self):
+    def animation(self) -> None:
+        """
+        Creates an animation containing:
+        - ground truth object track,
+        - track estimate produced by the tracking algorithm,
+        - track estimation error covariance,  
+        - object originated measurement (if present), and
+        - clutter measurments.
+        """
         
         fig, ax = plt.subplots(figsize=(10, 6))
 
@@ -382,17 +442,24 @@ class SOT(ABC):
                                  markersize=10,
                                    label="Groundtruth")
 
-        self.trajectory, = ax.plot([], [], "-o" ,color='blue', linewidth=2,
+        self.trajectory, = ax.plot([], [], "-o" ,
+                                   color='blue',
+                                   linewidth=2,
                                    label="Trajectory")
 
-        self.clutter_plot, = ax.plot([], [], 'o', color='grey', alpha=0.5,
+        self.clutter_plot, = ax.plot([], [], 'o',
+                                     color='grey',
+                                     alpha=0.5,
                                      label="Clutter")
 
-        self.real_meas_plot, = ax.plot([], [], 'o', color='red',
+        self.real_meas_plot, = ax.plot([], [], 'o',
+                                       color='red',
                                        label="True Measurement")
 
         if (len(self.choosen_measurements) > 0):
-            self.choosen_meas_plot, = ax.plot([], [], 'o', color='green', alpha=0.5,
+            self.choosen_meas_plot, = ax.plot([], [], 'o',
+                                              color='green',
+                                              alpha=0.5,
                                               label="Selected Measurement")
 
         cov = self.covariances[0, :2, :2]
