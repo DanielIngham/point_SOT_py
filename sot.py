@@ -96,7 +96,7 @@ class SOT(ABC):
 
         return jacobian
 
-    def meas_jacobian(self, state : np.ndarray) -> np.ndarray :
+    def meas_jacobian(self, state : np.ndarray) -> np.ndarray:
         jacobian = np.zeros((self.total_measurements, self.total_states))
         x = state[SE2.X.value]
         y = state[SE2.Y.value]
@@ -119,13 +119,13 @@ class SOT(ABC):
 
         return predicted_meas
 
-    def gaussian(self, diff, cov):
+    def gaussian(self, diff, cov) -> np.float64:
         inv_cov = np.linalg.inv(cov)
         det_cov = np.linalg.det(cov)
         norm_const = 1.0 / np.sqrt((2*np.pi)**2 * det_cov)
         return norm_const * np.exp(-0.5 * diff.T @ inv_cov @ diff)
 
-    def get_ellipse(self, mean, cov, n_std=3., **kwargs) :
+    def get_ellipse(self, mean, cov, n_std=3., **kwargs) -> Ellipse:
 
         # Eigen-decomposition
         vals, vecs = np.linalg.eigh(cov)
@@ -140,7 +140,7 @@ class SOT(ABC):
         return Ellipse(xy=mean, width=width, height=height, angle=theta, **kwargs)
 
 
-    def plot_meas(self, frame, clutter_plot, measurement_plot): 
+    def plot_meas(self, frame, clutter_plot, measurement_plot) -> None:
         clutter = []
         actual_measurement = [] 
         for measurement in self.simulator.measurements[frame]:
@@ -164,7 +164,7 @@ class SOT(ABC):
         else:
             measurement_plot.set_data([], [])
 
-    def plot_covariance(self, frame):
+    def plot_covariance(self, frame) -> None:
         cov = self.covariances[frame, :2, :2]
         mean = self.states[ : 2, frame]
 
@@ -178,18 +178,27 @@ class SOT(ABC):
         self.covariance.angle = new_ellipse.angle
 
 
-    def plot_choosen_measurement(self, frame):
+    def plot_choosen_measurement(self, frame) -> None:
         if (len(self.choosen_measurements) > 0):
             self.choosen_meas_plot.set_data([self.x[frame - 1]],[self.y[frame - 1]])
 
-    def update(self, frame):
+    def update(self, frame : int) -> tuple:
         self.plot_meas(frame, self.clutter_plot, self.real_meas_plot)
+
         self.plot_choosen_measurement(frame)
 
         self.plot_covariance(frame)
 
         self.trajectory.set_data(self.states[0, : frame + 1],
                                  self.states[1, :frame + 1]) 
+
+
+        vibes : list = [[], []]
+        for id, trajectory in self.simulator.objects.items():
+            vibes[SE2.X.value].append(trajectory[SE2.X.value][frame])
+            vibes[SE2.Y.value].append(trajectory[SE2.Y.value][frame])
+
+        self.groundtruth_state.set_data(vibes[SE2.X.value], vibes[SE2.Y.value])
 
         if (len(self.choosen_measurements) > 0):
             return self.trajectory, self.clutter_plot,\
@@ -199,13 +208,28 @@ class SOT(ABC):
                 self.real_meas_plot, self.covariance
 
     def animation(self):
+        
         fig, ax = plt.subplots(figsize=(10, 6))
+
+        self.simulator.plot_trajectories(ax)
+
+        self.groundtruth_state, = ax.plot([], [], 'o' ,
+                                          # color='red',
+                                 markeredgecolor='red', 
+                                 markerfacecolor='none', 
+                                 markeredgewidth=2, 
+                                 markersize=10,
+                                   label="Groundtruth")
+
         self.trajectory, = ax.plot([], [], "-o" ,color='blue', linewidth=2,
                                    label="Trajectory")
+
         self.clutter_plot, = ax.plot([], [], 'o', color='grey', alpha=0.5,
                                      label="Clutter")
+
         self.real_meas_plot, = ax.plot([], [], 'o', color='red',
                                        label="True Measurement")
+
         if (len(self.choosen_measurements) > 0):
             self.choosen_meas_plot, = ax.plot([], [], 'o', color='green', alpha=0.5,
                                               label="Selected Measurement")
@@ -222,7 +246,6 @@ class SOT(ABC):
             self.xy = [(r * np.cos(b), r * np.sin(b)) for r, b in self.choosen_measurements]
             self.x,self.y = zip(*self.xy)
 
-        self.simulator.plot_trajectories(ax)
 
         ani = animation.FuncAnimation(
             fig,
