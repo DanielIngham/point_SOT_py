@@ -13,8 +13,9 @@ class SOT(ABC):
     total_states = 6
     total_measurements = 2
 
-    """ Parent Single Object tracking class use 
-    for generic tracking functionbality """
+    """ 
+    Parent Single Object tracking class use for generic tracking functionbality.
+    """
     def __init__(self, simulator : Simulator):
 
         self.simulator : Simulator = simulator
@@ -35,6 +36,14 @@ class SOT(ABC):
         self.set_prior()
 
     def set_prior(self):
+        """
+        Sets the prior (initial) object state equal to the ground truth state created
+        by the simulator. 
+
+        Notes
+        -----
+        It is assumed that the object is detected before tracking commences. 
+        """
         if (self.simulator.total_objects > 1):
             raise ValueError("Single object trackers can only track one object.")
 
@@ -52,7 +61,28 @@ class SOT(ABC):
         np.fill_diagonal(self.Q, 0.01)
         np.fill_diagonal(self.R, self.simulator.noise)
 
-    def prediction(self, prior, prior_cov, posterior, posterior_cov):
+    def prediction(self, prior : np.ndarray, prior_cov : np.ndarray,
+                   posterior : np.ndarray, posterior_cov : np.ndarray) -> None:
+        """
+        Performs the prediction step on the prior using a constant velocity motion 
+        model to get the predicted posterior.  
+
+        Parameters
+        ----------
+        prior : np.ndarray
+            The prior (previous) state of the object.
+            Shape: (6,)
+
+        prior_cov : np.ndarray
+            The prior (previous) estimation error covariance. This represents the 
+            uncertainty in the prior state estimate.
+
+        posterior : np.ndarray
+            Vector to store the predicted postior given the prior and the motion model.
+
+        posterior_cov : np.ndarray
+            Matrix to store the predicted estimation error covariance.
+        """
         posterior[SE2.X.value] =  prior[SE2.X.value] + \
             self.sample_rate * prior[SE2.V.value] * np.cos(prior[SE2.O.value])
 
@@ -68,12 +98,39 @@ class SOT(ABC):
         posterior_cov[:] = F @ prior_cov @ F.T + self.Q
 
     @abstractmethod
-    def correction(self, state, covariance, measurement_set):
+    def correction(self, state : np.ndarray, covariance : np.ndarray,
+                   measurement_set : list) -> None:
+        """
+        Apply the measurement correction (update) to the predicted state estimate.
+
+        This is an abstract method which must be overwritten by the child class. 
+        The child class will be required to perform its own data association to 
+        update the state and covariance arguments passed.
+
+        Parameters
+        ----------
+        state : np.ndarray
+            Current predicted state vector.
+            Shape: (6,)
+
+        covariance: np.ndarray
+            The estimation error covariance of the current state estimate.
+            Shape: (6, 6)
+
+        measurement_set: list
+            Collection of measurements available for the correction step. 
+            Note that this list contains clutter and may not contain an object 
+            originated measurement.
+        """
         pass
 
-    def track(self):
+    def track(self) -> None:
+        """
+        Performs bayesian single object tracking (prediction and correction)
+        for all measurements available from the simulation.
+        """
         for k in range(1, len(self.simulator.measurements)):
-            self.prediction(self.states[ : ,k-1], 
+            self.prediction(self.states[ : , k-1], 
                             self.covariances[k-1], 
                             self.states[ : , k], 
                             self.covariances[k])
@@ -82,6 +139,21 @@ class SOT(ABC):
                             self.simulator.measurements[k])
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
+        """
+        Calculates the Jacobian matrix of motion model given the objects current state. 
+
+        Parameters
+        ----------
+        state: np.ndarray
+            State of the system.
+            Shape: (4, )
+
+        Returns
+        -------
+        Jacobian : np.ndarray
+            The Jacobian matrix of the motion model given the current state.
+            Shape: (4, 6)
+        """
         jacobian = np.zeros((self.total_states, self.total_states))
 
         theta = state[SE2.O.value]
@@ -97,6 +169,23 @@ class SOT(ABC):
         return jacobian
 
     def meas_jacobian(self, state : np.ndarray) -> np.ndarray:
+        """
+        Calculates the Jacobian matrix of measurement model given the
+        objects current state. 
+
+        Parameters
+        ----------
+        state: np.ndarray
+            Predicted state of the system.
+            Shape: (4, )
+
+        Returns
+        -------
+        Jacobian : np.ndarray
+            The Jacobian matrix of the measurement model given the 
+            current state of the object.
+            Shape: (4, 6)
+        """
         jacobian = np.zeros((self.total_measurements, self.total_states))
         x = state[SE2.X.value]
         y = state[SE2.Y.value]
@@ -108,6 +197,24 @@ class SOT(ABC):
         return jacobian
 
     def predicted_meas(self, state) -> np.ndarray:
+        """
+        Calculates the value of what the measurement would be given the 
+        predicted state of the object. 
+
+        Parameters
+        ----------
+        state: np.ndarray
+            Predicted state of the system.
+            Shape: (4, )
+
+        Returns
+        -------
+        prediction : np.ndarray
+            The measurement that would be expected given the predicted state of the 
+            object.
+            Shape: (2,)
+
+        """
         predicted_meas = np.zeros(2, dtype=np.float64)
 
         predicted_meas[Indicies.RANGE.value] =\
@@ -119,13 +226,67 @@ class SOT(ABC):
 
         return predicted_meas
 
-    def gaussian(self, diff, cov) -> np.float64:
+    def gaussian(self, diff : np.ndarray, cov : np.ndarray) -> np.float64:
+        """
+        Function for calculating the value of a 2D multivariate Gaussian distribution.
+
+        Parameters
+        ----------
+        diff : np.ndarray
+            The difference between the observed value of the random variable and its 
+            expected value (mean).
+
+        cov : np.ndarray
+            The covariance matrix of the Gaussian distribution.
+
+        Returns
+        -------
+        Value of the multivariate Gaussian distribution.
+
+        Note
+        ----
+        The covariance matrix must be a square matrix.
+        The dimensions of the diff vector and cov matrix must be compatible.
+        """
+        n = diff.shape[0]
+        if n != cov.shape[0]:
+            raise ValueError("Mismatch between difference vector and covariance matrix\
+                sizes")
+
         inv_cov = np.linalg.inv(cov)
         det_cov = np.linalg.det(cov)
-        norm_const = 1.0 / np.sqrt((2*np.pi)**2 * det_cov)
+        norm_const = 1.0 / np.sqrt((2*np.pi)**n * det_cov)
+
         return norm_const * np.exp(-0.5 * diff.T @ inv_cov @ diff)
 
     def get_ellipse(self, mean, cov, n_std=3., **kwargs) -> Ellipse:
+        """
+        Creates an ellipse class from a 2D multivariate Gaussian distribution used for 
+        the animated plotting.
+
+        Parameters
+        ----------
+        mean : np.ndarray
+            The mean of the 2D multivariate Gaussian distribution. It represents the 
+            2D x and y position of the center of the ellipse.
+            Shape: (2,)
+
+        cov : np.ndarray
+            The covariance matrix of the multivariate Gaussian distribution.
+            Shape: (2, 2)
+        
+        n_std : float
+            The number of standard deviations that the circumference of the ellipse
+            should represent.
+
+        **kwargs
+            Ellipse class attributes that can be included.
+
+        Returns
+        -------
+        Instance of an Ellipse class that matches the shape of a 2D multivariate 
+        Gaussian distribution.
+        """
 
         # Eigen-decomposition
         vals, vecs = np.linalg.eigh(cov)
@@ -134,9 +295,9 @@ class SOT(ABC):
 
         # Compute ellipse parameters
         theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
-        width, height = 2 * n_std * np.sqrt(vals)  # 2σ ellipse
+        width, height = 2 * n_std * np.sqrt(vals)  
 
-        # Create ellipse patch
+        # Create ellipse
         return Ellipse(xy=mean, width=width, height=height, angle=theta, **kwargs)
 
 
