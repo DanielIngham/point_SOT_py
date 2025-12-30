@@ -12,7 +12,7 @@ class PDA(SOT):
     def __init__(self, simulator : Simulator):
         super().__init__(simulator)
 
-    def correction(self, state, covariance, measurement_set):
+    def correction_(self, state, covariance, measurement_set):
         total_hypothesis = len(measurement_set) + 1
 
         P_d = self.simulator.detection_prob

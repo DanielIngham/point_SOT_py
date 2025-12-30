@@ -62,7 +62,7 @@ class SOT(ABC):
         np.fill_diagonal(self.Q, 0.01)
         np.fill_diagonal(self.R, self.simulator.noise)
 
-    def prediction(self, prior : np.ndarray, prior_cov : np.ndarray,
+    def prediction_(self, prior : np.ndarray, prior_cov : np.ndarray,
                    posterior : np.ndarray, posterior_cov : np.ndarray) -> None:
         """
         Performs the prediction step on the prior using a constant velocity motion 
@@ -99,7 +99,7 @@ class SOT(ABC):
         posterior_cov[:] = F @ prior_cov @ F.T + self.Q
 
     @abstractmethod
-    def correction(self, state : np.ndarray, covariance : np.ndarray,
+    def correction_(self, state : np.ndarray, covariance : np.ndarray,
                    measurement_set : list) -> None:
         """
         Apply the measurement correction (update) to the predicted state estimate.
@@ -131,12 +131,12 @@ class SOT(ABC):
         for all measurements available from the simulation.
         """
         for k in range(1, len(self.simulator.measurements)):
-            self.prediction(self.states[ : , k-1], 
+            self.prediction_(self.states[ : , k-1], 
                             self.covariances[k-1], 
                             self.states[ : , k], 
                             self.covariances[k])
 
-            self.correction(self.states[ : , k], self.covariances[k],
+            self.correction_(self.states[ : , k], self.covariances[k],
                             self.simulator.measurements[k])
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 

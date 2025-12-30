@@ -11,7 +11,7 @@ class NN(SOT):
     def __init__(self, simulator : Simulator):
         super().__init__(simulator)
 
-    def correction(self, state, covariance, measurement_set):
+    def correction_(self, state, covariance, measurement_set):
 
         P_d = self.simulator.detection_prob
         clutter_intense = self.simulator.average_clutter / self.simulator.fov_vol
