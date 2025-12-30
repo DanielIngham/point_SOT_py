@@ -20,19 +20,20 @@ class SOT(ABC):
     def __init__(self, simulator : Simulator):
 
         self.simulator : Simulator = simulator
-        self.states = np.zeros((self.total_states, len(self.simulator.measurements)), 
+
+        self.states : np.ndarray = np.zeros((self.total_states, len(self.simulator.measurements)),  
                                dtype=np.float64)
 
-        self.covariances = np.zeros((self.simulator.datapoints, 
+        self.covariances : np.ndarray = np.zeros((self.simulator.datapoints, 
                                      self.total_states, self.total_states), 
                                     dtype=np.float64)
 
-        self.sample_rate = simulator.sample_rate
+        self.sample_rate : float = simulator.sample_rate
 
-        self.choosen_measurements = []
+        self.choosen_measurements : list = []
 
-        self.Q = np.zeros((self.total_states, self.total_states))
-        self.R = np.zeros((self.total_measurements, self.total_measurements))
+        self.Q : np.ndarray = np.zeros((self.total_states, self.total_states))
+        self.R : np.ndarray = np.zeros((self.total_measurements, self.total_measurements))
 
         self.set_prior()
 
@@ -109,7 +110,7 @@ class SOT(ABC):
 
     @abstractmethod
     def correction_(self, state : np.ndarray, covariance : np.ndarray,
-                   measurement_set : list[float]) -> None:
+                   measurement_set : list[tuple[float, float]]) -> None:
         """
         Apply the measurement correction (update) to the predicted state estimate.
 
@@ -135,7 +136,7 @@ class SOT(ABC):
         pass
 
     def gate(self, state : np.ndarray, covariance : np.ndarray, 
-             measurements : list[float]) -> list[float] :
+             measurement_set : list[tuple[float, float]]) -> list[tuple[float, float]] :
         """
         Removes measurements whose normalized innovation (Mahalanobis distance) 
         exceeds a threshold corresponding to the 99th percentile of the 
@@ -153,13 +154,19 @@ class SOT(ABC):
             The estimation error covariance of the current state estimate.
             Shape: (6,6)
 
-        measurements : list[float]
+        measurements : list[tuple[[float]]
             Collection of measurements available for the correction step. 
             Note that this list contains clutter and may not contain an object 
             originated measurement.
-
         """
-        return measurements
+        gated_measurements : list[tuple[float, float]]
+
+        for measurement in measurement_set:
+            v = np.array(measurement) - self.predicted_meas(state)
+            H = self.meas_jacobian(state)
+            S = H @ covariance @ H.T + self.R
+
+        return gated_measurements
 
     def track(self) -> None:
         """
