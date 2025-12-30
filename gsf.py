@@ -6,13 +6,11 @@ from sot import SOT
 
 
 class Hypothesis(TypedDict):
-    max : int           # Maximum number of hypothesis maintained. 
-    total : int         # Current number of hypothesis being maintained.
-    state : list        # List of states for each hypothesis.
-    cov : list          # List of covariances for each hypothesis.
-    priorState : list        # List of states for each hypothesis.
-    priorCov : list          # List of covariances for each hypothesis.
-    weight : list       # List of weights of each hypothesis. 
+    max : int                   # Maximum number of hypothesis maintained. 
+    total : int                 # Current number of hypothesis being maintained.
+    state : list[np.ndarray]    # List of states for each hypothesis.
+    cov : list[np.ndarray]      # List of covariances for each hypothesis.
+    weight : list[float]   # List of weights of each hypothesis. 
 
 class GSF(SOT):
     """
@@ -27,15 +25,13 @@ class GSF(SOT):
             "total" : 0,
             "state" : [],
             "cov" : [],
-            "priorState" : [],
-            "priorCov" : [],
             "weight" : [],
         }
 
         self.hypothesis["total"] += 1
         self.hypothesis["state"].append(self.states[ : , 0])
         self.hypothesis["cov"].append(self.covariances[0])
-        self.hypothesis["weight"].append(1)
+        self.hypothesis["weight"].append(1.)
 
     def track(self) -> None:
         """
@@ -44,24 +40,25 @@ class GSF(SOT):
         """
         for k in range(1, len(self.simulator.measurements)):
             # Propagate the hypotheses.
-            self.states[ : , k] = self.prediction()
-            # self.states[ : , k] = self.states[ : , k-1]
+            self.states[ : , k], self.covariances[k] = self.prediction()
             self.correction_(self.states[ : , k], self.covariances[k],
                             self.simulator.measurements[k])
 
-    def prediction(self) -> np.ndarray :
+    def prediction(self) -> tuple[np.ndarray, np.ndarray] :
 
         for i in range(self.hypothesis["total"]) :
-            prior_state = self.hypothesis["state"][i].copy()
-            prior_cov = self.hypothesis["cov"][i].copy()
+            self.hypothesis["state"][i], self.hypothesis["cov"][i] = self.prediction_(
+                self.hypothesis["state"][i], self.hypothesis["cov"][i])
 
-            # self.prediction_(prior_state, 
-            #                 prior_cov, 
-            #                 self.hypothesis["state"][i], 
-            #                 self.hypothesis["covariance"][i])
+        # Return the hypothesis with the maximum weight (MAP estimate)
+        weights = self.hypothesis["weight"]
+        index = weights.index(max(weights))
 
-        # return self.hypothesis["state"][0]
-        return self.hypothesis["state"][0] + 0.6
+        return self.hypothesis["state"][index], self.hypothesis["cov"][index]
+
+    def correction(self):
+        for i in range(self.hypothesis["total"]) :
+            pass
 
     def correction_(self, state, covariance, measurement_set):
         pass
