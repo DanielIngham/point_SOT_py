@@ -53,7 +53,7 @@ class NN(SOT):
 
 
 if __name__ == "__main__":
-    filter = NN(Simulator(1))
+    filter = NN(Simulator(total_objects=1, seed=42))
     filter.track()
     filter.animation()
 

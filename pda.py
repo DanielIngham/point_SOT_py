@@ -78,7 +78,7 @@ class PDA(SOT):
 
 
 if __name__ == "__main__":
-    filter = PDA(Simulator(1))
+    filter = PDA(Simulator(total_objects=1, seed=42))
     filter.track()
     filter.animation()
 
