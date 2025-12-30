@@ -138,7 +138,7 @@ class SOT(ABC):
     def gate(self, state : np.ndarray, covariance : np.ndarray, 
              measurement_set : list[tuple[float, float]]) -> list[tuple[float, float]] :
         """
-        Removes measurements whose normalized innovation (Mahalanobis distance) 
+        Removes measurements whose normalized innovation squared (Mahalanobis distance) 
         exceeds a threshold corresponding to the 99th percentile of the 
         appropriate chi-square distribution. This rejects statistically 
         unlikely associations, improving robustness and reducing the number 
@@ -154,17 +154,31 @@ class SOT(ABC):
             The estimation error covariance of the current state estimate.
             Shape: (6,6)
 
-        measurements : list[tuple[[float]]
+        measurement_set : list[tuple[[float]]
             Collection of measurements available for the correction step. 
             Note that this list contains clutter and may not contain an object 
             originated measurement.
-        """
+
+        Returns
+        -------
         gated_measurements : list[tuple[float, float]]
+            A subset of the original measurement set which has the measurements 
+            whose normalised innovation squared don't fall the 99th percentile of
+            the chi-square distribution with 2 degrees of freedom.
+        """
+        gated_measurements : list[tuple[float, float]] = []
 
         for measurement in measurement_set:
-            v = np.array(measurement) - self.predicted_meas(state)
-            H = self.meas_jacobian(state)
-            S = H @ covariance @ H.T + self.R
+            v : np.ndarray = np.array(measurement) - self.predicted_meas(state)
+            H : np.ndarray = self.meas_jacobian(state)
+            S : np.ndarray = H @ covariance @ H.T + self.R
+
+            NIS = v.T @ np.linalg.inv(S) @ v
+
+            THRESHOLD : float = 10.594
+
+            if (NIS < THRESHOLD): 
+                gated_measurements.append(measurement)
 
         return gated_measurements
 
@@ -177,9 +191,14 @@ class SOT(ABC):
             self.states[ : , k], self.covariances[k] =  self.prediction_(
                 self.states[ : , k-1], self.covariances[k-1])
 
-            self.correction_(self.states[ : , k], 
+            gated_measurements = self.gate(self.states[ : , k], 
                              self.covariances[k],
                              self.simulator.measurements[k])
+
+            self.correction_(self.states[ : , k],
+                             self.covariances[k],
+                             gated_measurements)
+
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
         """
