@@ -62,8 +62,7 @@ class SOT(ABC):
         np.fill_diagonal(self.Q, 0.01)
         np.fill_diagonal(self.R, self.simulator.noise)
 
-    def prediction_(self, prior : np.ndarray, prior_cov : np.ndarray,
-                   posterior : np.ndarray, posterior_cov : np.ndarray) -> None:
+    def prediction_(self, prior : np.ndarray, prior_cov : np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         """
         Performs the prediction step on the prior using a constant velocity motion 
         model to get the predicted posterior.  
@@ -77,13 +76,21 @@ class SOT(ABC):
         prior_cov : np.ndarray
             The prior (previous) estimation error covariance. This represents the 
             uncertainty in the prior state estimate.
+            Shape: (6,6)
 
+        Returns
+        -------
         posterior : np.ndarray
             Vector to store the predicted postior given the prior and the motion model.
+            Shape: (6,)
 
         posterior_cov : np.ndarray
             Matrix to store the predicted estimation error covariance.
+            Shape: (6,6)
         """
+        posterior = np.zeros_like(prior)
+        posterior_cov = np.zeros_like(prior_cov)
+
         posterior[SE2.X.value] =  prior[SE2.X.value] + \
             self.sample_rate * prior[SE2.V.value] * np.cos(prior[SE2.O.value])
 
@@ -96,7 +103,9 @@ class SOT(ABC):
         posterior[SE2.W.value] = .0
 
         F = self.motion_jacobian(prior)
-        posterior_cov[:] = F @ prior_cov @ F.T + self.Q
+        posterior_cov = F @ prior_cov @ F.T + self.Q
+
+        return posterior, posterior_cov
 
     @abstractmethod
     def correction_(self, state : np.ndarray, covariance : np.ndarray,
@@ -131,10 +140,8 @@ class SOT(ABC):
         for all measurements available from the simulation.
         """
         for k in range(1, len(self.simulator.measurements)):
-            self.prediction_(self.states[ : , k-1], 
-                            self.covariances[k-1], 
-                            self.states[ : , k], 
-                            self.covariances[k])
+            self.states[ : , k], self.covariances[k] =  self.prediction_(
+                self.states[ : , k-1], self.covariances[k-1])
 
             self.correction_(self.states[ : , k], self.covariances[k],
                             self.simulator.measurements[k])
