@@ -109,7 +109,7 @@ class SOT(ABC):
 
     @abstractmethod
     def correction_(self, state : np.ndarray, covariance : np.ndarray,
-                   measurement_set : list) -> None:
+                   measurement_set : list[float]) -> None:
         """
         Apply the measurement correction (update) to the predicted state estimate.
 
@@ -127,12 +127,39 @@ class SOT(ABC):
             The estimation error covariance of the current state estimate.
             Shape: (6, 6)
 
-        measurement_set: list
+        measurement_set: list[float]
             Collection of measurements available for the correction step. 
             Note that this list contains clutter and may not contain an object 
             originated measurement.
         """
         pass
+
+    def gate(self, state : np.ndarray, covariance : np.ndarray, 
+             measurements : list[float]) -> list[float] :
+        """
+        Removes measurements whose normalized innovation (Mahalanobis distance) 
+        exceeds a threshold corresponding to the 99th percentile of the 
+        appropriate chi-square distribution. This rejects statistically 
+        unlikely associations, improving robustness and reducing the number 
+        of measurements that must be processed.
+
+        Parameters
+        ----------
+        state : np.ndarray,
+            Current predicted state vector.
+            Shape: (6,)
+
+        covariance : np.ndarray,
+            The estimation error covariance of the current state estimate.
+            Shape: (6,6)
+
+        measurements : list[float]
+            Collection of measurements available for the correction step. 
+            Note that this list contains clutter and may not contain an object 
+            originated measurement.
+
+        """
+        return measurements
 
     def track(self) -> None:
         """
@@ -143,8 +170,9 @@ class SOT(ABC):
             self.states[ : , k], self.covariances[k] =  self.prediction_(
                 self.states[ : , k-1], self.covariances[k-1])
 
-            self.correction_(self.states[ : , k], self.covariances[k],
-                            self.simulator.measurements[k])
+            self.correction_(self.states[ : , k], 
+                             self.covariances[k],
+                             self.simulator.measurements[k])
 
     def motion_jacobian(self, state : np.ndarray) -> np.ndarray: 
         """
